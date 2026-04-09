@@ -1,7 +1,10 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Plus, Radio } from "lucide-react";
-import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/session";
+import { db } from "@/db";
+import { monitor } from "@/db/app-schema";
+import { desc, eq } from "drizzle-orm";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -13,11 +16,14 @@ import {
 } from "@/components/ui/card";
 
 export default async function MonitorsPage() {
-  const session = await auth();
-  const monitors = await prisma.monitor.findMany({
-    where: { userId: session!.user!.id },
-    orderBy: { createdAt: "desc" },
-  });
+  const session = await getSession();
+  if (!session?.user?.id) redirect("/login");
+
+  const monitors = await db
+    .select()
+    .from(monitor)
+    .where(eq(monitor.userId, session.user.id))
+    .orderBy(desc(monitor.createdAt));
 
   return (
     <div className="mx-auto max-w-6xl space-y-8 px-4 py-8">

@@ -1,7 +1,10 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ArrowUpRight, Radio } from "lucide-react";
-import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/session";
+import { db } from "@/db";
+import { monitor, monitorCheck } from "@/db/app-schema";
+import { and, count, desc, eq, gte } from "drizzle-orm";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -13,30 +16,44 @@ import {
 import { Badge } from "@/components/ui/badge";
 
 export default async function DashboardPage() {
-  const session = await auth();
-  const uid = session!.user!.id;
+  const session = await getSession();
+  if (!session?.user?.id) redirect("/login");
 
-  const [recent, allForStats, checks24h, up, down, total] = await Promise.all([
-    prisma.monitor.findMany({
-      where: { userId: uid },
-      orderBy: { updatedAt: "desc" },
-      take: 8,
-    }),
-    prisma.monitor.findMany({
-      where: { userId: uid },
-      select: { lastResponseTimeMs: true },
-    }),
-    prisma.monitorCheck.count({
-      where: {
-        monitor: { userId: uid },
-        createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-      },
-    }),
-    prisma.monitor.count({ where: { userId: uid, status: "up" } }),
-    prisma.monitor.count({ where: { userId: uid, status: "down" } }),
-    prisma.monitor.count({ where: { userId: uid } }),
+  const uid = session.user.id;
+
+  const [recent, allForStats, checks24hRow, up, down, total] = await Promise.all([
+    db
+      .select()
+      .from(monitor)
+      .where(eq(monitor.userId, uid))
+      .orderBy(desc(monitor.updatedAt))
+      .limit(8),
+    db
+      .select({ lastResponseTimeMs: monitor.lastResponseTimeMs })
+      .from(monitor)
+      .where(eq(monitor.userId, uid)),
+    db
+      .select({ c: count() })
+      .from(monitorCheck)
+      .innerJoin(monitor, eq(monitorCheck.monitorId, monitor.id))
+      .where(
+        and(
+          eq(monitor.userId, uid),
+          gte(monitorCheck.createdAt, new Date(Date.now() - 24 * 60 * 60 * 1000))
+        )
+      ),
+    db
+      .select({ id: monitor.id })
+      .from(monitor)
+      .where(and(eq(monitor.userId, uid), eq(monitor.status, "up"))),
+    db
+      .select({ id: monitor.id })
+      .from(monitor)
+      .where(and(eq(monitor.userId, uid), eq(monitor.status, "down"))),
+    db.select({ id: monitor.id }).from(monitor).where(eq(monitor.userId, uid)),
   ]);
 
+  const checks24h = Number(checks24hRow[0]?.c ?? 0);
   const avgRt =
     allForStats.reduce((s, m) => s + (m.lastResponseTimeMs ?? 0), 0) /
     Math.max(allForStats.length, 1);
@@ -47,7 +64,7 @@ export default async function DashboardPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-muted-foreground">
-            Health at a glance for {session?.user?.email}
+            Health at a glance for {session.user.email}
           </p>
         </div>
         <div className="flex gap-2">
@@ -64,7 +81,7 @@ export default async function DashboardPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Monitors</CardDescription>
-            <CardTitle className="text-3xl">{total}</CardTitle>
+            <CardTitle className="text-3xl">{total.length}</CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
             Active checks you own
@@ -74,9 +91,9 @@ export default async function DashboardPage() {
           <CardHeader className="pb-2">
             <CardDescription>Up / Down</CardDescription>
             <CardTitle className="flex items-baseline gap-2 text-3xl">
-              <span className="text-emerald-400">{up}</span>
+              <span className="text-emerald-400">{up.length}</span>
               <span className="text-muted-foreground">/</span>
-              <span className="text-red-400">{down}</span>
+              <span className="text-red-400">{down.length}</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">

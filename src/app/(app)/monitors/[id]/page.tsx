@@ -1,7 +1,9 @@
-import { notFound } from "next/navigation";
 import Link from "next/link";
-import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { notFound, redirect } from "next/navigation";
+import { getSession } from "@/lib/session";
+import { db } from "@/db";
+import { monitor, monitorCheck } from "@/db/app-schema";
+import { and, desc, eq } from "drizzle-orm";
 import { MonitorForm } from "@/components/monitor-form";
 import { MonitorActions } from "@/components/monitor-actions";
 import {
@@ -19,17 +21,23 @@ export default async function MonitorDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const session = await auth();
-  const monitor = await prisma.monitor.findFirst({
-    where: { id, userId: session!.user!.id },
-  });
-  if (!monitor) notFound();
+  const session = await getSession();
+  if (!session?.user?.id) redirect("/login");
 
-  const checks = await prisma.monitorCheck.findMany({
-    where: { monitorId: id },
-    orderBy: { createdAt: "desc" },
-    take: 50,
-  });
+  const rows = await db
+    .select()
+    .from(monitor)
+    .where(and(eq(monitor.id, id), eq(monitor.userId, session.user.id)))
+    .limit(1);
+  const mon = rows[0];
+  if (!mon) notFound();
+
+  const checks = await db
+    .select()
+    .from(monitorCheck)
+    .where(eq(monitorCheck.monitorId, id))
+    .orderBy(desc(monitorCheck.createdAt))
+    .limit(50);
 
   return (
     <div className="space-y-8 pb-16">
@@ -40,46 +48,46 @@ export default async function MonitorDetailPage({
             <div className="flex flex-wrap items-center gap-2">
               <Badge
                 variant={
-                  monitor.status === "up"
+                  mon.status === "up"
                     ? "success"
-                    : monitor.status === "down"
+                    : mon.status === "down"
                       ? "destructive"
                       : "secondary"
                 }
               >
-                {monitor.status}
+                {mon.status}
               </Badge>
-              <MonitorActions monitorId={monitor.id} />
+              <MonitorActions monitorId={mon.id} />
             </div>
-            {monitor.publicSlug && (
+            {mon.publicSlug && (
               <p className="text-sm text-muted-foreground">
                 Public:{" "}
                 <Link
-                  href={`/status/${monitor.publicSlug}`}
+                  href={`/status/${mon.publicSlug}`}
                   className="text-primary underline"
                   target="_blank"
                 >
-                  /status/{monitor.publicSlug}
+                  /status/{mon.publicSlug}
                 </Link>
               </p>
             )}
           </div>
         }
         initial={{
-          id: monitor.id,
-          name: monitor.name,
-          url: monitor.url,
-          method: monitor.method,
-          expectedStatus: monitor.expectedStatus,
-          expectedBody: monitor.expectedBody ?? "",
-          intervalSeconds: monitor.intervalSeconds,
-          enabled: monitor.enabled,
-          useCustomNotify: monitor.useCustomNotify,
-          notifyEmail: monitor.notifyEmail ?? true,
-          notifySms: monitor.notifySms ?? false,
-          notifySlack: monitor.notifySlack ?? false,
-          notifyTelegram: monitor.notifyTelegram ?? false,
-          public: !!monitor.publicSlug,
+          id: mon.id,
+          name: mon.name,
+          url: mon.url,
+          method: mon.method,
+          expectedStatus: mon.expectedStatus,
+          expectedBody: mon.expectedBody ?? "",
+          intervalSeconds: mon.intervalSeconds,
+          enabled: mon.enabled,
+          useCustomNotify: mon.useCustomNotify,
+          notifyEmail: mon.notifyEmail ?? true,
+          notifySms: mon.notifySms ?? false,
+          notifySlack: mon.notifySlack ?? false,
+          notifyTelegram: mon.notifyTelegram ?? false,
+          public: !!mon.publicSlug,
         }}
       />
 
@@ -113,14 +121,10 @@ export default async function MonitorDetailPage({
                     <span className="text-muted-foreground">
                       {c.createdAt.toLocaleString()}
                     </span>
-                    {c.statusCode != null && (
-                      <span>HTTP {c.statusCode}</span>
-                    )}
+                    {c.statusCode != null && <span>HTTP {c.statusCode}</span>}
                     {c.responseTime != null && <span>{c.responseTime} ms</span>}
                     {c.error && (
-                      <span className="w-full text-xs text-destructive">
-                        {c.error}
-                      </span>
+                      <span className="w-full text-xs text-destructive">{c.error}</span>
                     )}
                   </li>
                 ))}

@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { asc, and, eq } from "drizzle-orm";
+import { getSession } from "@/lib/session";
+import { db } from "@/db";
+import { integration } from "@/db/app-schema";
+import { createId } from "@/lib/id";
 
 const upsertSchema = z.object({
   type: z.enum(["email", "sms", "slack", "telegram"]),
@@ -10,14 +13,16 @@ const upsertSchema = z.object({
 });
 
 export async function GET() {
-  const session = await auth();
+  const session = await getSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const list = await prisma.integration.findMany({
-    where: { userId: session.user.id },
-    orderBy: { type: "asc" },
-  });
+  const list = await db
+    .select()
+    .from(integration)
+    .where(eq(integration.userId, session.user.id))
+    .orderBy(asc(integration.type));
+
   const sanitized = list.map((i) => {
     const cfg = safeParseConfig(i.config);
     const masked: Record<string, string> = { ...cfg };
@@ -43,7 +48,7 @@ function mask(s: string) {
 }
 
 export async function POST(req: Request) {
-  const session = await auth();
+  const session = await getSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -54,27 +59,42 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });
     }
     const { type, enabled, config } = parsed.data;
-    const existing = await prisma.integration.findFirst({
-      where: { userId: session.user.id, type },
-    });
+    const existingRows = await db
+      .select()
+      .from(integration)
+      .where(
+        and(eq(integration.userId, session.user.id), eq(integration.type, type))
+      )
+      .limit(1);
+    const existing = existingRows[0];
     const prev = existing ? safeParseConfig(existing.config) : {};
     const mergedConfig = { ...prev, ...(config ?? {}) };
-    const row = existing
-      ? await prisma.integration.update({
-          where: { id: existing.id },
-          data: {
-            enabled: enabled ?? existing.enabled,
-            config: JSON.stringify(mergedConfig),
-          },
+
+    if (existing) {
+      await db
+        .update(integration)
+        .set({
+          enabled: enabled ?? existing.enabled,
+          config: JSON.stringify(mergedConfig),
         })
-      : await prisma.integration.create({
-          data: {
-            userId: session.user.id,
-            type,
-            enabled: enabled ?? true,
-            config: JSON.stringify(mergedConfig),
-          },
-        });
+        .where(eq(integration.id, existing.id));
+    } else {
+      await db.insert(integration).values({
+        id: createId(),
+        userId: session.user.id,
+        type,
+        enabled: enabled ?? true,
+        config: JSON.stringify(mergedConfig),
+      });
+    }
+
+    const [row] = await db
+      .select()
+      .from(integration)
+      .where(
+        and(eq(integration.userId, session.user.id), eq(integration.type, type))
+      )
+      .limit(1);
     return NextResponse.json({ integration: row });
   } catch {
     return NextResponse.json({ error: "Server error" }, { status: 500 });

@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { and, desc, eq, ne } from "drizzle-orm";
+import { getSession } from "@/lib/session";
+import { db } from "@/db";
+import { monitor, monitorCheck } from "@/db/app-schema";
 import { slugify } from "@/lib/utils";
 
 const patchSchema = z.object({
@@ -25,37 +27,41 @@ const patchSchema = z.object({
 });
 
 async function getOwnedMonitor(id: string, userId: string) {
-  return prisma.monitor.findFirst({
-    where: { id, userId },
-  });
+  const rows = await db
+    .select()
+    .from(monitor)
+    .where(and(eq(monitor.id, id), eq(monitor.userId, userId)))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 export async function GET(
   _req: Request,
   ctx: { params: Promise<{ id: string }> }
 ) {
-  const session = await auth();
+  const session = await getSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const { id } = await ctx.params;
-  const monitor = await getOwnedMonitor(id, session.user.id);
-  if (!monitor) {
+  const row = await getOwnedMonitor(id, session.user.id);
+  if (!row) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  const checks = await prisma.monitorCheck.findMany({
-    where: { monitorId: id },
-    orderBy: { createdAt: "desc" },
-    take: 100,
-  });
-  return NextResponse.json({ monitor, checks });
+  const checks = await db
+    .select()
+    .from(monitorCheck)
+    .where(eq(monitorCheck.monitorId, id))
+    .orderBy(desc(monitorCheck.createdAt))
+    .limit(100);
+  return NextResponse.json({ monitor: row, checks });
 }
 
 export async function PATCH(
   req: Request,
   ctx: { params: Promise<{ id: string }> }
 ) {
-  const session = await auth();
+  const session = await getSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -77,9 +83,13 @@ export async function PATCH(
       let candidate = base;
       let n = 0;
       while (
-        await prisma.monitor.findFirst({
-          where: { publicSlug: candidate, NOT: { id } },
-        })
+        (
+          await db
+            .select({ id: monitor.id })
+            .from(monitor)
+            .where(and(eq(monitor.publicSlug, candidate), ne(monitor.id, id)))
+            .limit(1)
+        ).length > 0
       ) {
         n += 1;
         candidate = `${base}-${n}`;
@@ -89,9 +99,10 @@ export async function PATCH(
     if (d.public === false) {
       publicSlug = null;
     }
-    const monitor = await prisma.monitor.update({
-      where: { id },
-      data: {
+
+    await db
+      .update(monitor)
+      .set({
         ...(d.name !== undefined && { name: d.name }),
         ...(d.url !== undefined && { url: d.url }),
         ...(d.method !== undefined && { method: d.method }),
@@ -105,9 +116,11 @@ export async function PATCH(
         ...(d.notifySlack !== undefined && { notifySlack: d.notifySlack }),
         ...(d.notifyTelegram !== undefined && { notifyTelegram: d.notifyTelegram }),
         ...(d.public !== undefined && { publicSlug }),
-      },
-    });
-    return NextResponse.json({ monitor });
+      })
+      .where(eq(monitor.id, id));
+
+    const [updated] = await db.select().from(monitor).where(eq(monitor.id, id)).limit(1);
+    return NextResponse.json({ monitor: updated });
   } catch {
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
@@ -117,7 +130,7 @@ export async function DELETE(
   _req: Request,
   ctx: { params: Promise<{ id: string }> }
 ) {
-  const session = await auth();
+  const session = await getSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -126,6 +139,6 @@ export async function DELETE(
   if (!existing) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  await prisma.monitor.delete({ where: { id } });
+  await db.delete(monitor).where(eq(monitor.id, id));
   return NextResponse.json({ ok: true });
 }

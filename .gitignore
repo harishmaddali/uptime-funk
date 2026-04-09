@@ -37,6 +37,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 
-# prisma
-/prisma/*.db
-/prisma/*.db-journal
+# sqlite / drizzle
+dev.db
+dev.db-journal
+/drizzle/*.sql

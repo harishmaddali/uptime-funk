@@ -1,25 +1,29 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { monitor } from "@/db/app-schema";
 
 export async function GET(
   _req: Request,
   ctx: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await ctx.params;
-  const monitor = await prisma.monitor.findFirst({
-    where: { publicSlug: slug },
-    select: {
-      id: true,
-      name: true,
-      url: true,
-      status: true,
-      lastCheckedAt: true,
-      lastResponseTimeMs: true,
-      publicSlug: true,
-    },
-  });
-  if (!monitor) {
+  const rows = await db
+    .select({
+      id: monitor.id,
+      name: monitor.name,
+      url: monitor.url,
+      status: monitor.status,
+      lastCheckedAt: monitor.lastCheckedAt,
+      lastResponseTimeMs: monitor.lastResponseTimeMs,
+      publicSlug: monitor.publicSlug,
+    })
+    .from(monitor)
+    .where(eq(monitor.publicSlug, slug))
+    .limit(1);
+  const m = rows[0];
+  if (!m) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  return NextResponse.json({ monitor });
+  return NextResponse.json({ monitor: m });
 }

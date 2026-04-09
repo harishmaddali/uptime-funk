@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { Activity, LayoutDashboard, ListChecks, Settings } from "lucide-react";
-import { auth } from "@/lib/auth";
-import { SignOutMenuItem } from "@/components/sign-out-button";
+import { getSession } from "@/lib/session";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -11,6 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { SignOutMenuItem } from "@/components/sign-out-button";
 
 const links = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -19,7 +19,7 @@ const links = [
 ];
 
 export async function AppShell({ children }: { children: React.ReactNode }) {
-  const session = await auth();
+  const session = await getSession();
 
   return (
     <div className="min-h-screen flex flex-col">

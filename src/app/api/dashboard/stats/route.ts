@@ -1,34 +1,44 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { and, eq, gte } from "drizzle-orm";
+import { getSession } from "@/lib/session";
+import { db } from "@/db";
+import { monitor, monitorCheck } from "@/db/app-schema";
+import { sql } from "drizzle-orm";
 
 export async function GET() {
-  const session = await auth();
+  const session = await getSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const uid = session.user.id;
-  const [monitors, checks24h, upCount, downCount] = await Promise.all([
-    prisma.monitor.findMany({ where: { userId: uid } }),
-    prisma.monitorCheck.count({
-      where: {
-        monitor: { userId: uid },
-        createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-      },
-    }),
-    prisma.monitor.count({ where: { userId: uid, status: "up" } }),
-    prisma.monitor.count({ where: { userId: uid, status: "down" } }),
-  ]);
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
+  const monitorsList = await db
+    .select()
+    .from(monitor)
+    .where(eq(monitor.userId, uid));
+
+  const checks24hRows = await db
+    .select({ c: sql<number>`count(*)`.mapWith(Number) })
+    .from(monitorCheck)
+    .innerJoin(monitor, eq(monitorCheck.monitorId, monitor.id))
+    .where(
+      and(eq(monitor.userId, uid), gte(monitorCheck.createdAt, since))
+    );
+  const checks24h = checks24hRows[0]?.c ?? 0;
+
+  const up = monitorsList.filter((m) => m.status === "up").length;
+  const down = monitorsList.filter((m) => m.status === "down").length;
+  const total = monitorsList.length;
   const avgRt =
-    monitors.reduce((s, m) => s + (m.lastResponseTimeMs ?? 0), 0) /
-    Math.max(monitors.length, 1);
+    monitorsList.reduce((s, m) => s + (m.lastResponseTimeMs ?? 0), 0) /
+    Math.max(total, 1);
 
   return NextResponse.json({
-    totalMonitors: monitors.length,
-    up: upCount,
-    down: downCount,
-    unknown: monitors.length - upCount - downCount,
+    totalMonitors: total,
+    up,
+    down,
+    unknown: total - up - down,
     checks24h,
     avgResponseTimeMs: Math.round(avgRt),
   });

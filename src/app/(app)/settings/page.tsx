@@ -1,9 +1,9 @@
 import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { getSession } from "@/lib/session";
 import { SettingsTabs } from "@/components/settings-tabs";
 
 export default async function SettingsPage() {
-  const session = await auth();
+  const session = await getSession();
   if (!session?.user?.id) redirect("/login");
 
   return (

@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { monitor, monitorCheck } from "@/db/app-schema";
+import { user } from "@/db/auth-schema";
 import { runMonitorCheck } from "@/lib/monitor-check";
 import {
   resolveChannelsForMonitor,
   sendIncidentNotifications,
 } from "@/lib/notifications";
+import { createId } from "@/lib/id";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -17,18 +21,22 @@ export async function GET(req: Request) {
   }
 
   const now = Date.now();
-  const monitors = await prisma.monitor.findMany({
-    where: { enabled: true },
-    include: { user: true },
-  });
+  const monitors = await db
+    .select({
+      monitor,
+      ownerEmail: user.email,
+    })
+    .from(monitor)
+    .innerJoin(user, eq(monitor.userId, user.id))
+    .where(eq(monitor.enabled, true));
 
-  const due = monitors.filter((m) => {
+  const due = monitors.filter(({ monitor: m }) => {
     const last = m.lastCheckedAt?.getTime() ?? 0;
     return now - last >= m.intervalSeconds * 1000;
   });
 
   let checked = 0;
-  for (const m of due) {
+  for (const { monitor: m } of due) {
     const result = await runMonitorCheck({
       url: m.url,
       method: m.method,
@@ -40,26 +48,25 @@ export async function GET(req: Request) {
     const newStatus = result.ok ? "up" : "down";
     const failures = result.ok ? 0 : m.consecutiveFailures + 1;
 
-    await prisma.monitorCheck.create({
-      data: {
-        monitorId: m.id,
-        ok: result.ok,
-        statusCode: result.statusCode,
-        responseTime: result.responseTimeMs,
-        error: result.error,
-      },
+    await db.insert(monitorCheck).values({
+      id: createId(),
+      monitorId: m.id,
+      ok: result.ok,
+      statusCode: result.statusCode,
+      responseTime: result.responseTimeMs,
+      error: result.error,
     });
 
-    await prisma.monitor.update({
-      where: { id: m.id },
-      data: {
+    await db
+      .update(monitor)
+      .set({
         status: newStatus,
         lastCheckedAt: new Date(),
         lastResponseTimeMs: result.responseTimeMs,
         lastError: result.error,
         consecutiveFailures: failures,
-      },
-    });
+      })
+      .where(eq(monitor.id, m.id));
 
     checked += 1;
 

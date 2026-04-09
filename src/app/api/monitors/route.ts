@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { desc, eq } from "drizzle-orm";
+import { getSession } from "@/lib/session";
+import { db } from "@/db";
+import { monitor } from "@/db/app-schema";
 import { slugify } from "@/lib/utils";
+import { createId } from "@/lib/id";
 
 const createSchema = z.object({
   name: z.string().min(1).max(120),
@@ -26,22 +29,21 @@ const createSchema = z.object({
 });
 
 export async function GET() {
-  const session = await auth();
+  const session = await getSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const monitors = await prisma.monitor.findMany({
-    where: { userId: session.user.id },
-    orderBy: { createdAt: "desc" },
-    include: {
-      _count: { select: { checks: true } },
-    },
-  });
+  const monitors = await db
+    .select()
+    .from(monitor)
+    .where(eq(monitor.userId, session.user.id))
+    .orderBy(desc(monitor.createdAt));
+
   return NextResponse.json({ monitors });
 }
 
 export async function POST(req: Request) {
-  const session = await auth();
+  const session = await getSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -60,31 +62,40 @@ export async function POST(req: Request) {
       const base = slugify(d.name) || "monitor";
       let candidate = base;
       let n = 0;
-      while (await prisma.monitor.findUnique({ where: { publicSlug: candidate } })) {
+      while (
+        (
+          await db
+            .select({ id: monitor.id })
+            .from(monitor)
+            .where(eq(monitor.publicSlug, candidate))
+            .limit(1)
+        ).length > 0
+      ) {
         n += 1;
         candidate = `${base}-${n}`;
       }
       publicSlug = candidate;
     }
-    const monitor = await prisma.monitor.create({
-      data: {
-        userId: session.user.id,
-        name: d.name,
-        url: d.url,
-        method: d.method,
-        expectedStatus: d.expectedStatus,
-        expectedBody: d.expectedBody ?? null,
-        intervalSeconds: d.intervalSeconds,
-        enabled: d.enabled ?? true,
-        useCustomNotify: d.useCustomNotify ?? false,
-        notifyEmail: d.notifyEmail ?? null,
-        notifySms: d.notifySms ?? null,
-        notifySlack: d.notifySlack ?? null,
-        notifyTelegram: d.notifyTelegram ?? null,
-        publicSlug,
-      },
+    const id = createId();
+    await db.insert(monitor).values({
+      id,
+      userId: session.user.id,
+      name: d.name,
+      url: d.url,
+      method: d.method,
+      expectedStatus: d.expectedStatus,
+      expectedBody: d.expectedBody ?? null,
+      intervalSeconds: d.intervalSeconds,
+      enabled: d.enabled ?? true,
+      useCustomNotify: d.useCustomNotify ?? false,
+      notifyEmail: d.notifyEmail ?? null,
+      notifySms: d.notifySms ?? null,
+      notifySlack: d.notifySlack ?? null,
+      notifyTelegram: d.notifyTelegram ?? null,
+      publicSlug,
     });
-    return NextResponse.json({ monitor });
+    const [created] = await db.select().from(monitor).where(eq(monitor.id, id)).limit(1);
+    return NextResponse.json({ monitor: created });
   } catch {
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }

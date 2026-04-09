@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Activity } from "lucide-react";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { monitor } from "@/db/app-schema";
+import { eq } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -17,18 +19,20 @@ export default async function PublicStatusPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const monitor = await prisma.monitor.findFirst({
-    where: { publicSlug: slug },
-    select: {
-      name: true,
-      url: true,
-      status: true,
-      lastCheckedAt: true,
-      lastResponseTimeMs: true,
-      lastError: true,
-    },
-  });
-  if (!monitor) notFound();
+  const rows = await db
+    .select({
+      name: monitor.name,
+      url: monitor.url,
+      status: monitor.status,
+      lastCheckedAt: monitor.lastCheckedAt,
+      lastResponseTimeMs: monitor.lastResponseTimeMs,
+      lastError: monitor.lastError,
+    })
+    .from(monitor)
+    .where(eq(monitor.publicSlug, slug))
+    .limit(1);
+  const m = rows[0];
+  if (!m) notFound();
 
   return (
     <div className="min-h-screen bg-background">
@@ -39,7 +43,7 @@ export default async function PublicStatusPage({
           </span>
           <div>
             <p className="text-sm text-muted-foreground">Status page</p>
-            <h1 className="text-xl font-semibold">{monitor.name}</h1>
+            <h1 className="text-xl font-semibold">{m.name}</h1>
           </div>
         </div>
       </header>
@@ -49,34 +53,32 @@ export default async function PublicStatusPage({
             <div>
               <CardTitle>Current status</CardTitle>
               <CardDescription className="font-mono text-xs break-all">
-                {monitor.url}
+                {m.url}
               </CardDescription>
             </div>
             <Badge
               variant={
-                monitor.status === "up"
+                m.status === "up"
                   ? "success"
-                  : monitor.status === "down"
+                  : m.status === "down"
                     ? "destructive"
                     : "secondary"
               }
               className="text-sm uppercase"
             >
-              {monitor.status}
+              {m.status}
             </Badge>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
             <p>
               Last check:{" "}
-              {monitor.lastCheckedAt
-                ? monitor.lastCheckedAt.toLocaleString()
-                : "Never"}
+              {m.lastCheckedAt ? m.lastCheckedAt.toLocaleString() : "Never"}
             </p>
-            {monitor.lastResponseTimeMs != null && (
-              <p>Response time: {monitor.lastResponseTimeMs} ms</p>
+            {m.lastResponseTimeMs != null && (
+              <p>Response time: {m.lastResponseTimeMs} ms</p>
             )}
-            {monitor.lastError && monitor.status === "down" && (
-              <p className="text-destructive">{monitor.lastError}</p>
+            {m.lastError && m.status === "down" && (
+              <p className="text-destructive">{m.lastError}</p>
             )}
           </CardContent>
         </Card>

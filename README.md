@@ -1,43 +1,55 @@
 # Uptime Funk
 
-Next.js app for monitoring HTTP endpoints (services, APIs, feature-flag URLs) with a dashboard, per-monitor settings, public status pages, and multi-channel alerts.
+Next.js app for monitoring HTTP endpoints with a dashboard, public status pages, and multi-channel alerts.
 
-## Features
+## Stack
 
-- **Monitors**: URL, HTTP method, expected status code, optional body substring, interval (1 min → 1 hr), enable/disable, optional public status page (`/status/<slug>`).
-- **Notifications**: Account-wide **default channels** (email, SMS, Slack, Telegram) plus **per-monitor overrides** when “custom notification settings” is enabled.
-- **Slack**: OAuth install stores webhook + token (`/api/integrations/slack/*`). Configure `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `AUTH_URL`.
-- **Email**: [Resend](https://resend.com) — `RESEND_API_KEY`, `EMAIL_FROM`.
-- **SMS**: Twilio — `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`.
-- **Telegram**: `TELEGRAM_BOT_TOKEN` + per-user chat id in Settings.
-- **Scheduler**: `GET /api/cron/check-monitors` with header `Authorization: Bearer <CRON_SECRET>`. Run at least as often as your shortest interval.
+- **Drizzle ORM** + **better-sqlite3** (swap to Postgres + `drizzle-orm/pg` in production if you like)
+- **Better Auth** — email/password, **email verification via OTP** (Resend), **Google** & **GitHub** OAuth
+- **shadcn-style** UI (Radix + Tailwind)
 
-## UI
+## Auth flow
 
-Built with **shadcn/ui**-style components (Radix + Tailwind). `components.json` is included for adding more primitives via:
-
-```bash
-npx shadcn@latest add dialog
-```
+1. **Sign up** with email/password → Better Auth sends a **6-digit OTP** via Resend (`emailOTP` plugin, `overrideDefaultEmailVerification`).
+2. User opens **`/verify-email`**, enters the code → `authClient.emailOtp.verifyEmail`.
+3. **Sign in** with email/password (`requireEmailVerification: true` blocks unverified accounts).
+4. **Google / GitHub**: configure OAuth env vars and set `NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=true` / `NEXT_PUBLIC_GITHUB_AUTH_ENABLED=true` so the buttons show on `/login` and `/signup`.
 
 ## Setup
 
 ```bash
 cp .env.example .env
-# Set AUTH_SECRET (32+ random bytes), DATABASE_URL, CRON_SECRET, etc.
+# Required: BETTER_AUTH_SECRET, BETTER_AUTH_URL, RESEND_API_KEY, EMAIL_FROM, DATABASE_URL
 
 npm install
-npx prisma db push
+npm run db:push   # applies Drizzle schema to SQLite
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), sign up, add monitors, configure integrations under **Settings**.
+### Regenerating Better Auth tables
 
-## Production notes
+If you change Better Auth plugins/options, refresh the generated Drizzle file:
 
-- Use PostgreSQL: change `provider` in `prisma/schema.prisma` and `DATABASE_URL`.
-- Set `AUTH_URL` to your public origin for Slack OAuth redirect.
-- Point your cron (Vercel Cron, GitHub Actions, etc.) at `/api/cron/check-monitors`.
+```bash
+npm run auth:schema
+npm run db:push
+```
+
+## Scripts
+
+- `npm run db:push` — `drizzle-kit push` (dev-friendly schema sync)
+- `npm run db:studio` — Drizzle Studio
+- `npm run auth:schema` — regenerate `src/db/auth-schema.ts` from `better-auth.cli.ts`
+
+## Scheduler
+
+`GET /api/cron/check-monitors` with `Authorization: Bearer <CRON_SECRET>` — run on your shortest monitor interval.
+
+## Production
+
+- Set a strong **`BETTER_AUTH_SECRET`** (do not rely on the dev fallback).
+- Use a hosted DB + update `DATABASE_URL` and Drizzle dialect if needed.
+- Set **`BETTER_AUTH_URL`** to your public origin (OAuth callbacks).
 
 ## License
 

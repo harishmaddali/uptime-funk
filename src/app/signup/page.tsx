@@ -16,6 +16,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useToast } from "@/components/ui/use-toast";
+import { authClient } from "@/lib/auth-client";
+import { Separator } from "@/components/ui/separator";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -25,29 +27,51 @@ export default function SignupPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const googleEnabled = Boolean(
+    process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "true"
+  );
+  const githubEnabled = Boolean(
+    process.env.NEXT_PUBLIC_GITHUB_AUTH_ENABLED === "true"
+  );
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    try {
-      const res = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Could not sign up");
-      }
-      toast({ title: "Account created", description: "You can log in now." });
-      router.push("/login");
-    } catch (err) {
+    const { error } = await authClient.signUp.email({
+      name: name.trim() || "User",
+      email,
+      password,
+      callbackURL: "/verify-email",
+    });
+    setLoading(false);
+    if (error) {
       toast({
         variant: "destructive",
         title: "Sign up failed",
-        description: err instanceof Error ? err.message : "Try again",
+        description: error.message || "Try a different email.",
       });
-    } finally {
-      setLoading(false);
+      return;
+    }
+    toast({
+      title: "Check your email",
+      description: "We sent a verification code to your inbox.",
+    });
+    router.push(`/verify-email?email=${encodeURIComponent(email)}`);
+  }
+
+  async function oauth(provider: "google" | "github") {
+    setLoading(true);
+    const { error } = await authClient.signIn.social({
+      provider,
+      callbackURL: "/dashboard",
+    });
+    setLoading(false);
+    if (error) {
+      toast({
+        variant: "destructive",
+        title: `${provider} sign-in failed`,
+        description: error.message,
+      });
     }
   }
 
@@ -63,7 +87,7 @@ export default function SignupPage() {
         <CardHeader>
           <CardTitle>Create your workspace</CardTitle>
           <CardDescription>
-            Start monitoring endpoints in under a minute.
+            Sign up with email — we&apos;ll verify with a one-time code (Resend).
           </CardDescription>
         </CardHeader>
         <form onSubmit={onSubmit}>
@@ -106,6 +130,39 @@ export default function SignupPage() {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Creating…" : "Create account"}
             </Button>
+            {(googleEnabled || githubEnabled) && (
+              <>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Separator className="flex-1" />
+                  or continue with
+                  <Separator className="flex-1" />
+                </div>
+                <div className="flex gap-2">
+                  {googleEnabled && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="flex-1"
+                      disabled={loading}
+                      onClick={() => oauth("google")}
+                    >
+                      Google
+                    </Button>
+                  )}
+                  {githubEnabled && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="flex-1"
+                      disabled={loading}
+                      onClick={() => oauth("github")}
+                    >
+                      GitHub
+                    </Button>
+                  )}
+                </div>
+              </>
+            )}
             <p className="text-center text-sm text-muted-foreground">
               Already have an account?{" "}
               <Link href="/login" className="text-primary underline">

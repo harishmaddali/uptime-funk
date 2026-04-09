@@ -1,4 +1,7 @@
-import { prisma } from "./prisma";
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { user } from "@/db/auth-schema";
+import { defaultNotification, integration } from "@/db/app-schema";
 
 type NotifyChannels = {
   email: boolean;
@@ -7,7 +10,7 @@ type NotifyChannels = {
   telegram: boolean;
 };
 
-function parseIntegrationConfig(type: string, config: string): Record<string, string> {
+function parseIntegrationConfig(config: string): Record<string, string> {
   try {
     const o = JSON.parse(config) as Record<string, unknown>;
     const out: Record<string, string> = {};
@@ -22,7 +25,7 @@ function parseIntegrationConfig(type: string, config: string): Record<string, st
 
 export async function resolveChannelsForMonitor(
   userId: string,
-  monitor: {
+  mon: {
     useCustomNotify: boolean;
     notifyEmail: boolean | null;
     notifySms: boolean | null;
@@ -30,15 +33,19 @@ export async function resolveChannelsForMonitor(
     notifyTelegram: boolean | null;
   }
 ): Promise<NotifyChannels> {
-  const defaults =
-    (await prisma.defaultNotification.findUnique({ where: { userId } })) ?? {
-      email: true,
-      sms: false,
-      slack: false,
-      telegram: false,
-    };
+  const rows = await db
+    .select()
+    .from(defaultNotification)
+    .where(eq(defaultNotification.userId, userId))
+    .limit(1);
+  const defaults = rows[0] ?? {
+    email: true,
+    sms: false,
+    slack: false,
+    telegram: false,
+  };
 
-  if (!monitor.useCustomNotify) {
+  if (!mon.useCustomNotify) {
     return {
       email: defaults.email,
       sms: defaults.sms,
@@ -47,10 +54,10 @@ export async function resolveChannelsForMonitor(
     };
   }
   return {
-    email: monitor.notifyEmail ?? defaults.email,
-    sms: monitor.notifySms ?? defaults.sms,
-    slack: monitor.notifySlack ?? defaults.slack,
-    telegram: monitor.notifyTelegram ?? defaults.telegram,
+    email: mon.notifyEmail ?? defaults.email,
+    sms: mon.notifySms ?? defaults.sms,
+    slack: mon.notifySlack ?? defaults.slack,
+    telegram: mon.notifyTelegram ?? defaults.telegram,
   };
 }
 
@@ -61,28 +68,36 @@ export async function sendIncidentNotifications(params: {
   error: string;
   channels: NotifyChannels;
 }) {
-  const user = await prisma.user.findUnique({ where: { id: params.userId } });
-  if (!user?.email) return;
+  const urows = await db
+    .select({ email: user.email })
+    .from(user)
+    .where(eq(user.id, params.userId))
+    .limit(1);
+  const u = urows[0];
+  if (!u?.email) return;
 
-  const integrations = await prisma.integration.findMany({
-    where: { userId: params.userId, enabled: true },
-  });
+  const integrations = await db
+    .select()
+    .from(integration)
+    .where(eq(integration.userId, params.userId));
+
+  const enabledInts = integrations.filter((i) => i.enabled);
 
   const text = `🔴 *${params.monitorName}* is DOWN\n${params.url}\n_${params.error}_`;
 
   const promises: Promise<void>[] = [];
 
   if (params.channels.email) {
-    const emailInt = integrations.find((i) => i.type === "email");
-    const cfg = emailInt ? parseIntegrationConfig("email", emailInt.config) : {};
-    const to = cfg.to || user.email;
+    const emailInt = enabledInts.find((i) => i.type === "email");
+    const cfg = emailInt ? parseIntegrationConfig(emailInt.config) : {};
+    const to = cfg.to || u.email;
     promises.push(sendResendEmail(to, `Down: ${params.monitorName}`, text));
   }
 
   if (params.channels.slack) {
-    const slack = integrations.find((i) => i.type === "slack");
+    const slack = enabledInts.find((i) => i.type === "slack");
     if (slack) {
-      const cfg = parseIntegrationConfig("slack", slack.config);
+      const cfg = parseIntegrationConfig(slack.config);
       if (cfg.webhookUrl) {
         promises.push(sendSlackWebhook(cfg.webhookUrl, text));
       }
@@ -90,9 +105,9 @@ export async function sendIncidentNotifications(params: {
   }
 
   if (params.channels.telegram) {
-    const tg = integrations.find((i) => i.type === "telegram");
+    const tg = enabledInts.find((i) => i.type === "telegram");
     if (tg) {
-      const cfg = parseIntegrationConfig("telegram", tg.config);
+      const cfg = parseIntegrationConfig(tg.config);
       if (cfg.chatId && process.env.TELEGRAM_BOT_TOKEN) {
         promises.push(
           sendTelegram(process.env.TELEGRAM_BOT_TOKEN, cfg.chatId, text)
@@ -102,9 +117,9 @@ export async function sendIncidentNotifications(params: {
   }
 
   if (params.channels.sms) {
-    const sms = integrations.find((i) => i.type === "sms");
+    const sms = enabledInts.find((i) => i.type === "sms");
     if (sms) {
-      const cfg = parseIntegrationConfig("sms", sms.config);
+      const cfg = parseIntegrationConfig(sms.config);
       if (cfg.to) {
         promises.push(
           sendTwilioSms(

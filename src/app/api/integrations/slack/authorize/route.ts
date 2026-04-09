@@ -1,15 +1,18 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getSession } from "@/lib/session";
 
 const SCOPES = ["incoming-webhook", "chat:write", "channels:read"].join(",");
 
 export async function GET() {
-  const session = await auth();
+  const session = await getSession();
   if (!session?.user?.id) {
-    return NextResponse.redirect(new URL("/login", process.env.AUTH_URL));
+    const base =
+      process.env.BETTER_AUTH_URL || process.env.AUTH_URL || "http://localhost:3000";
+    return NextResponse.redirect(new URL("/login", base));
   }
   const clientId = process.env.SLACK_CLIENT_ID;
-  const base = process.env.AUTH_URL || "http://localhost:3000";
+  const base =
+    process.env.BETTER_AUTH_URL || process.env.AUTH_URL || "http://localhost:3000";
   if (!clientId) {
     return NextResponse.json(
       { error: "Slack OAuth not configured (SLACK_CLIENT_ID)" },

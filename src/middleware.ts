@@ -1,28 +1,33 @@
-import NextAuth from "next-auth";
-import { authConfig } from "@/auth.config";
+import { NextResponse, type NextRequest } from "next/server";
+import { getSessionCookie } from "better-auth/cookies";
 
-const { auth } = NextAuth(authConfig);
-
-export default auth((req) => {
-  const { pathname } = req.nextUrl;
-  const isAuthed = !!req.auth;
+export function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  const hasCookie = Boolean(getSessionCookie(request));
 
   if (
     pathname.startsWith("/dashboard") ||
     pathname.startsWith("/monitors") ||
     pathname.startsWith("/settings")
   ) {
-    if (!isAuthed) {
-      const u = new URL("/login", req.nextUrl);
+    if (!hasCookie) {
+      const u = new URL("/login", request.nextUrl);
       u.searchParams.set("callbackUrl", pathname);
-      return Response.redirect(u);
+      return NextResponse.redirect(u);
     }
   }
 
-  if ((pathname === "/login" || pathname === "/signup") && isAuthed) {
-    return Response.redirect(new URL("/dashboard", req.nextUrl));
+  if (
+    (pathname === "/login" ||
+      pathname === "/signup" ||
+      pathname === "/verify-email") &&
+    hasCookie
+  ) {
+    return NextResponse.redirect(new URL("/dashboard", request.nextUrl));
   }
-});
+
+  return NextResponse.next();
+}
 
 export const config = {
   matcher: [
@@ -31,5 +36,6 @@ export const config = {
     "/settings/:path*",
     "/login",
     "/signup",
+    "/verify-email",
   ],
 };
